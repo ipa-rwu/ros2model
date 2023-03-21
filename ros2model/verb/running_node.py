@@ -52,6 +52,12 @@ class RunningNodeVerb(VerbExtension):
             action="store_true",
             help="Generate models for all node in current running system",
         )
+        parser.add_argument(
+            "-dir",
+            "--output-dir",
+            default=".",
+            help="The output file for the generated model.",
+        )
 
     def create_a_node_model(slef, target_node_name, output, args):
         subscribers: List[TopicInfo] = []
@@ -167,6 +173,7 @@ class RunningNodeVerb(VerbExtension):
         )
         print(contents)
         output_file = Path(output)
+        output_file.parents[0].mkdir(parents=True, exist_ok=True)
         print("Writing model to {}".format(output_file.absolute()))
         output_file.touch()
         output_file.write_text(contents)
@@ -181,5 +188,7 @@ class RunningNodeVerb(VerbExtension):
                 ):
                     if not re.search(r"transform_listener_impl", tmp_node.full_name):
                         self.create_a_node_model(
-                            tmp_node.full_name, f"{tmp_node.name}.ros2", args
+                            tmp_node.full_name,
+                            f"{args.output_dir}/{tmp_node.name}.ros2",
+                            args,
                         )
