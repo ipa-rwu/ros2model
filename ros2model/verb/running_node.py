@@ -23,6 +23,7 @@ from ros2model.verb import VerbExtension
 from ros2model.api import get_parameter_type_string
 from ament_index_python import get_package_share_directory
 from jinja2 import Environment, FileSystemLoader
+import re
 
 
 class RunningNodeVerb(VerbExtension):
@@ -31,7 +32,7 @@ class RunningNodeVerb(VerbExtension):
     def add_arguments(self, parser, cli_name):
         add_arguments(parser)
         argument = parser.add_argument(
-            "node_name", help="Node name to request information"
+            "-n", "--node_name", help="Node name to request information"
         )
         argument.completer = NodeNameCompleter()
         parser.add_argument(
@@ -43,11 +44,16 @@ class RunningNodeVerb(VerbExtension):
             "-o",
             "--output",
             default=".",
-            required=True,
             help="The output file for the generated model.",
         )
+        parser.add_argument(
+            "-ga",
+            "--generate-all",
+            action="store_true",
+            help="Generate models for all node in current running system",
+        )
 
-    def main(self, *, args):
+    def create_a_node_model(slef, target_node_name, output, args):
         subscribers: List[TopicInfo] = []
         publishers: List[TopicInfo] = []
         service_clients: List[TopicInfo] = []
@@ -55,8 +61,9 @@ class RunningNodeVerb(VerbExtension):
         actions_clients: List[TopicInfo] = []
         actions_servers: List[TopicInfo] = []
         parameters: List[TopicInfo] = []
+
         with NodeStrategy(args) as node:
-            node_name = get_absolute_node_name(args.node_name)
+            node_name = get_absolute_node_name(target_node_name)
             node_names = get_node_names(
                 node=node, include_hidden_nodes=args.include_hidden
             )
@@ -64,15 +71,15 @@ class RunningNodeVerb(VerbExtension):
             if count > 1:
                 print(
                     INFO_NONUNIQUE_WARNING_TEMPLATE.format(
-                        num_nodes=count, node_name=args.node_name
+                        num_nodes=count, node_name=target_node_name
                     ),
                     file=sys.stderr,
                 )
             if count > 0:
-                print(args.node_name)
+                print(target_node_name)
                 subscribers = get_subscriber_info(
                     node=node,
-                    remote_node_name=args.node_name,
+                    remote_node_name=target_node_name,
                     include_hidden=args.include_hidden,
                 )
                 fix_topic_types(node_name, subscribers)
@@ -80,7 +87,7 @@ class RunningNodeVerb(VerbExtension):
 
                 publishers = get_publisher_info(
                     node=node,
-                    remote_node_name=args.node_name,
+                    remote_node_name=target_node_name,
                     include_hidden=args.include_hidden,
                 )
                 fix_topic_types(node_name, publishers)
@@ -88,7 +95,7 @@ class RunningNodeVerb(VerbExtension):
 
                 service_servers = get_service_server_info(
                     node=node,
-                    remote_node_name=args.node_name,
+                    remote_node_name=target_node_name,
                     include_hidden=args.include_hidden,
                 )
                 fix_topic_types(node_name, service_servers)
@@ -96,7 +103,7 @@ class RunningNodeVerb(VerbExtension):
 
                 service_clients = get_service_client_info(
                     node=node,
-                    remote_node_name=args.node_name,
+                    remote_node_name=target_node_name,
                     include_hidden=args.include_hidden,
                 )
                 fix_topic_types(node_name, service_clients)
@@ -104,7 +111,7 @@ class RunningNodeVerb(VerbExtension):
 
                 actions_servers = get_action_server_info(
                     node=node,
-                    remote_node_name=args.node_name,
+                    remote_node_name=target_node_name,
                     include_hidden=args.include_hidden,
                 )
                 fix_topic_types(node_name, actions_servers)
@@ -112,13 +119,13 @@ class RunningNodeVerb(VerbExtension):
 
                 actions_clients = get_action_client_info(
                     node=node,
-                    remote_node_name=args.node_name,
+                    remote_node_name=target_node_name,
                     include_hidden=args.include_hidden,
                 )
                 fix_topic_types(node_name, actions_clients)
                 actions_clients = fix_topic_names(node_name, actions_clients)
             else:
-                return "Unable to find node '" + args.node_name + "'"
+                return "Unable to find node '" + target_node_name + "'"
 
         with DirectNode(args) as node:
             response = call_list_parameters(node=node, node_name=node_name)
@@ -142,7 +149,7 @@ class RunningNodeVerb(VerbExtension):
         )
         template = env.get_template("node_model.jinja")
         contents = template.render(
-            node_name=args.node_name,
+            node_name=target_node_name,
             subscribers=subscribers,
             publishers=publishers,
             service_clients=service_clients,
@@ -159,7 +166,20 @@ class RunningNodeVerb(VerbExtension):
             has_parameters=len(parameters) > 0,
         )
         print(contents)
-        output_file = Path(args.output)
+        output_file = Path(output)
         print("Writing model to {}".format(output_file.absolute()))
         output_file.touch()
         output_file.write_text(contents)
+
+    def main(self, *, args):
+        if not args.generate_all:
+            self.create_a_node_model(args.node_name, args.output, args)
+        else:
+            with NodeStrategy(args) as node:
+                for tmp_node in get_node_names(
+                    node=node, include_hidden_nodes=args.include_hidden
+                ):
+                    if not re.search(r"transform_listener_impl", tmp_node.full_name):
+                        self.create_a_node_model(
+                            tmp_node.full_name, f"{tmp_node.name}.ros2", args
+                        )
